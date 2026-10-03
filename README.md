@@ -1,182 +1,96 @@
-<h1 align="center">新番日推</h1>
+# 新番日推
 
-<p align="center">
-  <img src="./logo.png" width="128" height="128" alt="新番日推">
-</p>
+每日整理 Bangumi 当天星期对应的放送日历，生成图片，通过 AstrBot 消息适配器查询或定时推送。
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.1-blue?style=flat" alt="version">
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-green?style=flat" alt="license">
-  <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat" alt="python">
-</p>
+基于 [NoFizz 的原插件](https://github.com/NoFizz/astrbot_plugin_bangumi_calendar) 修改，由 yun474 维护此 fork。保留原卡片样式、数据筛选及推送时间逻辑，增加本地 Playwright 渲染和自然日图片缓存。
 
-<p align="center">每日新番放送日历，定时推送卡片图至群聊</p>
+## 图片效果
 
-<p align="center">
-  <img src="https://count.getloli.com/@astrbot_plugin_bangumi_calendar?theme=moebooru" alt="Moe Counter">
-</p>
+<img src="./docs/screenshots/card.png" width="400" alt="新番日推卡片示例">
 
-## 功能简介
-
-新番日推 会在每天固定的时间自动整理当天更新的新番，生成一张好看的卡片图推送到群聊里。不用自己上网站查，打开群就能看到今天有哪些新番、评分如何、有多少人在追。
-
-## 内容列表
-
-- [功能简介](#功能简介)
-- [功能特性](#功能特性)
-- [推送卡片展示图](#推送卡片展示图)
-- [安装](#安装)
-- [配置说明](#配置说明)
-- [使用示例](#使用示例)
-- [依赖要求](#依赖要求)
-- [数据存储与隐私](#数据存储与隐私)
-- [技术细节](#技术细节)
-- [FAQ / 故障排查](#faq--故障排查)
-- [维护者](#维护者)
-- [如何贡献](#如何贡献)
-- [许可证](#许可证)
-
-## 功能特性
-
-- 每日定时向群聊推送今日新番日历卡片
-- 卡片展示封面、中/日文名、评分、全站排名、在看人数、首播日期和类型标签
-- 按排名优先或在看人数排序，可自定义排序方向
-- 可设置评分、在看人数下限，自动过滤不达标的番剧
-- 支持手动推送和随时查看今日新番
-
-## 推送卡片展示图
-
-<p align="center">
-  <img src="./docs/screenshots/card.png" width="400" alt="推送卡片示例">
-</p>
+卡片包含封面、中日文名、评分、排名、在看人数、首播日期和类型标签。数据来自 Bangumi 周历，不检测视频平台实际更新、集数或临时停播。
 
 ## 安装
 
-### 方法一：通过插件市场安装（推荐）
+在 AstrBot 插件管理中，从以下仓库安装：
 
-1. 打开 AstrBot WebUI → 插件管理 → 插件市场。
-2. 添加插件源（如尚未添加）：
-   - 源名称：`AstrBot Official Plugin Market`
-   - 源地址：`https://cloud-test.astrbot.app/api/v1/market/plugins.json`
-3. 在插件市场中搜索 **新番日推**（`astrbot_plugin_bangumi_calendar`），点击安装。
-4. 等待安装完成，确认插件已启用。
+```
+https://github.com/yun474/astrbot_plugin_bangumi_calendar
+```
 
-### 方法二：从 GitHub 安装
+手动安装时，将插件放入 `AstrBot/data/plugins/astrbot_plugin_bangumi_calendar`，在 AstrBot 使用的 Python 环境中安装依赖后重载：
 
-1. 打开 AstrBot WebUI → 插件管理 → 新增插件。
-2. 选择 **从 GitHub 安装**。
-3. 填入仓库地址：
-   ```
-   https://github.com/NoFizz/astrbot_plugin_bangumi_calendar
-   ```
-4. 等待安装完成，确认插件已启用。
+```bash
+python -m pip install -r data/plugins/astrbot_plugin_bangumi_calendar/requirements.txt
+```
 
-### 方法三：手动安装
+本地渲染还需要安装浏览器：
 
-1. 将本仓库克隆或下载到 AstrBot 的插件目录：
-   ```bash
-   cd AstrBot/data/plugins
-   git clone https://github.com/NoFizz/astrbot_plugin_bangumi_calendar.git
-   ```
-2. 安装依赖：
-   ```bash
-   pip install -r astrbot_plugin_bangumi_calendar/requirements.txt
-   ```
-3. 在 AstrBot WebUI 中重载插件，或重启 AstrBot。
+```bash
+python -m playwright install chromium
+```
 
-### 安装后检查
+Linux 容器如缺少系统库，可在构建或部署时使用 `python -m playwright install --with-deps chromium`，并安装中文字体（如 Noto CJK）。也可通过 `browser_path` 使用现有 Chrome/Edge；Docker 中填写容器内路径。
 
-- 确认 `requirements.txt` 中的依赖已正确安装。
-- 在 WebUI 插件管理中确认插件状态为"已启用"且无报错。
-- 配置推送目标 UMO 和推送时间后即可使用。
+## 配置
 
-## 配置说明
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `render_backend` | `remote` | `remote` 使用 AstrBot 文转图服务；`local` 使用本地 Playwright |
+| `browser_path` | 空 | 本地浏览器可执行文件绝对路径；留空使用 Playwright Chromium |
+| `umos` | `[]` | 推送目标 UMO 列表 |
+| `push_time` | `07:00` | 每日推送时间，服务器时区，支持 H:MM 或 HH:MM |
+| `max_items` | `0` | 最多显示的番剧数，0 不限制 |
+| `sort_by` | `score` | `score` 排名优先、未上榜按评分；`doing` 按在看人数 |
+| `sort_order` | `desc` | 降序 `desc` 或升序 `asc` |
+| `proxy` | 空 | 支持 HTTP/SOCKS5；空时读取环境变量，否则直连 |
+| `max_retries` | `3` | API 请求最大尝试次数，最小 1 |
+| `enable_score_min` | `false` | 是否启用评分下限 |
+| `score_min` | `0` | 评分下限 |
+| `enable_doing_min` | `false` | 是否启用在看人数下限 |
+| `doing_min` | `0` | 在看人数下限 |
 
-在 AstrBot WebUI 插件管理中点击本插件进行配置。
+启用本地渲染只需设置 `render_backend=local`。插件不自动下载浏览器，远程渲染不会启动本地浏览器。
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `umos` | list | `[]` | 推送目标 UMO 列表 |
-| `push_time` | string | `07:00` | 每日推送时间（H:MM 或 HH:MM，服务器时区） |
-| `max_items` | int | `0` | 每天最大推送番数，0 为不限制 |
-| `sort_by` | string | `score` | 排序依据（评分（Rank优先）/ 在看人数） |
-| `sort_order` | string | `desc` | 排序方向（降序 / 升序） |
-| `proxy` | string | 空 | 代理地址，留空使用直连 |
-| `max_retries` | int | `3` | API 请求最大重试次数 |
-| `enable_score_min` | bool | `false` | 启用评分下限过滤 |
-| `score_min` | float | `0` | 评分下限（需启用上方开关） |
-| `enable_doing_min` | bool | `false` | 启用在看人数下限过滤 |
-| `doing_min` | int | `0` | 在看人数下限（需启用上方开关） |
+UMO 格式为 `平台实例ID:GroupMessage:会话ID`。QQ 官方机器人使用群 OpenID，不是数字 QQ 群号，请从 AstrBot 实际会话复制。查询和主动推送均走 AstrBot 适配器，由适配器上传本地图片；插件不直接调用 botpy。
 
-**UMO 格式**：`Bot名:GroupMessage:群号`，例如 `AstrBot:GroupMessage:123456789`
+定时推送沿用原调度逻辑。官机需在线且目标允许主动消息；当前适配器可能需要先收到该会话的消息来识别群聊或频道场景。
 
-**代理格式**：支持 `http://127.0.0.1:7897` 或 `socks5://127.0.0.1:1080`
+## 指令
 
-## 使用示例
+| 中文 | 英文 | 说明 | 权限 |
+| --- | --- | --- | --- |
+| `/新番 今日` | `/bangumi today` | 查看今日图片 | 所有人 |
+| `/新番 推送` | `/bangumi push` | 推送到全部配置目标 | 管理员 |
+| `/新番 状态` | `/bangumi status` | 查看推送时间、目标数及渲染配置 | 管理员 |
 
-| 中文指令 | 英文指令 | 说明 | 权限 |
-|----------|----------|------|------|
-| `/新番 今日` | `/bangumi today` | 在当前聊天查看今日新番卡片 | 所有人 |
-| `/新番 推送` | `/bangumi push` | 手动推送到所有已配置目标 | 管理员 |
-| `/新番 状态` | `/bangumi status` | 查看插件运行状态与下次推送倒计时 | 管理员 |
+## 渲染与缓存
 
-## 依赖要求
+- 图片由原 HTML 模板生成，支持 AstrBot `html_render(return_url=False)` 或本地 Playwright。
+- 本地模式使用独立无头浏览器；截图完成、异常或取消后关闭浏览器及 Playwright 驱动。
+- 封面预先下载并嵌入 HTML，本地截图阶段不联网。远程模式会将模板、公开番剧数据与封面发送给配置的文转图服务。
+- 每日数据和最终 PNG 保存在 `data/plugin_data/astrbot_plugin_bangumi_calendar/daily/`。同一天、同一配置只生成一次；查询、定时推送及重启后复用本地缓存，并发请求也不会重复生成。
+- 日期按服务器本地自然日划分。午夜清理旧日期缓存，正在发送的任务完成后再清理；离线时在下次启动补清理。次日首次查询或推送生成当天图片。
+- 排序、筛选、数量、渲染后端、浏览器路径或图片模板变化会生成新缓存。当天评分和排名保持快照值。
+- 图片先写入临时文件，成功后再发布到缓存；失败不会留下可发送的半成品。
+- 封面仍缓存在插件目录 `covers/`，沿用原有 30 天清理逻辑。
 
-- Python >= 3.10
-- httpx[socks]
+数据来源：[Bangumi API](https://bangumi.github.io/api/)，使用 `/calendar` 及 `/v0/subjects/{id}`。
 
-## 数据存储与隐私
+## 验证与排查
 
-- **封面缓存**：番剧封面图缓存在插件目录的 `covers/` 下，30 天自动清理。
-- **数据来源**：从 [Bangumi API](https://api.bgm.tv/calendar) 获取公开放送日历数据，无需认证，不上传任何用户数据。
+本地验证环境：Windows、Python 3.14、AstrBot 4.26.8、Edge。涵盖真实 AstrBot 消息链、本地浏览器、并发缓存、重启复用、跨日和失败清理。尚未连接真实 QQ 账号验证发送。该环境版本不是技术最低版本声明，本次未新增或抬高 `astrbot_version`。
 
-## 技术细节
+在安装了 AstrBot 与插件依赖的环境中运行：
 
-- **数据源**：[Bangumi 每周放送日历 API](https://bangumi.github.io/api/)（`https://api.bgm.tv/calendar`），无需认证
-- **渲染**：HTML + Jinja2 模板 → AstrBot 内置 `html_render`（Playwright）→ PNG 图片
-- **封面处理**：宿主机预下载封面并转 base64 data URI 嵌入 HTML，解决 Docker 内 Playwright 无法加载外部图片的问题
-- **网络**：所有 HTTP 请求使用 `httpx`，启用 `follow_redirects`，代理优先读取配置、回退到环境变量
-- **排序**：评分模式为 Rank 优先（先按 Bangumi 全站排名高到低，未上榜的按评分高到低）；在看人数模式按在看数排序。排序后可选按评分/在看人数下限过滤（开关各自生效，同时开启时须同时满足），最后按 `max_items` 截断
-- **容错**：API 请求可配置重试次数（默认 3 次，线性退避），渲染/推送失败静默降级并记录日志
+```bash
+python -m unittest discover -s tests -v
+```
 
-## FAQ / 故障排查
+查询失败会回复提示，推送失败会记录日志并跳过该目标。请先用 `/新番 今日` 检查图片：远程模式检查文转图服务，本地模式检查浏览器、系统库和中文字体。推送时间以服务器时区为准，非法时间回退到 07:00。
 
-### Q1：推送时间配置没有生效？
+## 作者与许可
 
-`push_time` 格式不合法（不是 `H:MM` 或 `HH:MM`）时，解析会失败并回退到默认时间 `07:00`。请检查配置值，例如 `7:00`、`07:00` 都是合法格式。
+原作者：[NoFizz](https://github.com/NoFizz)。此 fork 维护者：[yun474](https://github.com/yun474)。版本号暂保留 1.1.1。
 
-### Q2：到点没有收到推送卡片？
-
-卡片发送依赖渲染环节，`html_render` 需要 AstrBot 的浏览器服务（Puppeteer / t2i）正常运行。渲染或发送失败时会记录日志并静默跳过本次推送，不会抛出异常；API 请求失败会按 `max_retries`（默认 3 次）自动重试。排查步骤：
-
-1. 在 WebUI 插件管理中确认插件已启用且无报错。
-2. 确认浏览器服务正常，可先在群里用 `/新番 今日` 手动触发一次。
-3. 查看 AstrBot 日志中本插件的渲染与推送错误记录。
-
-### Q3：封面缓存存在哪里？会一直增长吗？
-
-封面图缓存在插件目录的 `covers/` 下。缓存文件超过 30 天未被访问会自动清理，无需手动干预。
-
-### Q4：如何配置代理？
-
-在配置项 `proxy` 中填写代理地址，支持 `http://127.0.0.1:7897` 或 `socks5://127.0.0.1:1080`。留空时回退读取环境变量 `HTTP_PROXY` / `HTTPS_PROXY`，两者均未设置则使用直连。
-
-### Q5：为什么收到重复的推送？
-
-检查配置项 `umos` 中是否有重复的目标 UMO。同一 UMO 出现多次时会对同一群聊推送多次，删除重复项即可。
-
-### Q6：推送时间以什么时区为准？
-
-以服务器本地时间为准，即代码中 `datetime.now()` 所在时区，不受客户端或用户时区影响。部署时请确认服务器时区设置正确。
-
-## 维护者
-
-**NoFizz** · [GitHub](https://github.com/NoFizz)
-
-## 如何贡献
-
-欢迎提交 [Issue](https://github.com/NoFizz/astrbot_plugin_bangumi_calendar/issues) 反馈问题或功能建议，也接受 [Pull Request](https://github.com/NoFizz/astrbot_plugin_bangumi_calendar/pulls)。
-
-## 许可证
-
-本项目基于 [AGPL-3.0](LICENSE) 许可证开源。
+遵循原项目 [AGPL-3.0](LICENSE) 许可。

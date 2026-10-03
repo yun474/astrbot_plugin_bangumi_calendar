@@ -1,8 +1,22 @@
 {
+  "render_backend": {
+    "description": "图片渲染方式",
+    "type": "string",
+    "options": ["remote", "local"],
+    "labels": ["AstrBot 文转图服务", "本地 Playwright"],
+    "default": "remote",
+    "hint": "两种方式都保存本地每日图片；本地浏览器用完即关闭。"
+  },
+  "browser_path": {
+    "description": "本地浏览器可执行文件",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用 Playwright Chromium（需先执行 python -m playwright install chromium）。也可填写 Chrome/Edge 可执行文件的绝对路径。"
+  },
   "umos": {
     "description": "推送目标UMO列表",
     "type": "list",
-    "hint": "填写完整UMO，格式: Bot名:GroupMessage:群号",
+    "hint": "填写完整 UMO：平台实例ID:GroupMessage:会话ID。QQ 官机使用群 OpenID，请从 AstrBot 实际会话复制。",
     "obvious_hint": true,
     "default": []
   },

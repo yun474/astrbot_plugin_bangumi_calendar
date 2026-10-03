@@ -1,6 +1,6 @@
 name: astrbot_plugin_bangumi_calendar
 display_name: 新番日推
-desc: 每日新番放送日历，定时推送卡片图至群聊
+desc: 每日新番放送日历，支持本地渲染与图片缓存推送
 version: "1.1.1"
-author: NoFizz
-repo: https://github.com/NoFizz/astrbot_plugin_bangumi_calendar
+author: NoFizz, yun474
+repo: https://github.com/yun474/astrbot_plugin_bangumi_calendar

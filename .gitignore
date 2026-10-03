@@ -36,10 +36,11 @@ node_modules/
 
 # Runtime cache
 covers/
+/data/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Tests (本地开发用，不上传)
-tests/
+# Local tooling
+.ruff_cache/
