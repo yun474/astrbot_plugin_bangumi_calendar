@@ -38,8 +38,7 @@ def parse_push_time(raw) -> tuple[int, int]:
         tuple[int, int]: (小时, 分钟)；解析失败或越界时回退 (7, 0)。
     """
     try:
-        parts = str(raw).strip().split(":")
-        h, m = int(parts[0]), int(parts[1])
+        h, m = map(int, str(raw).strip().split(":"))
         if 0 <= h <= 23 and 0 <= m <= 59:
             return h, m
         raise ValueError

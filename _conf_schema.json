@@ -16,7 +16,7 @@
   "umos": {
     "description": "推送目标UMO列表",
     "type": "list",
-    "hint": "填写完整 UMO：平台实例ID:GroupMessage:会话ID。QQ 官机使用群 OpenID，请从 AstrBot 实际会话复制。",
+    "hint": "在目标会话用 /新番 订阅 自动添加，也可手动填写完整 UMO：平台实例ID:GroupMessage:会话ID。QQ 官机使用群 OpenID。删除列表项并保存可取消订阅。",
     "obvious_hint": true,
     "default": []
   },

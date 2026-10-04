@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -16,6 +17,7 @@ sys.path.insert(0, str(REPO.parent))
 main = importlib.import_module(f"{REPO.name}.main")
 cache_module = importlib.import_module(f"{REPO.name}.daily_cache")
 renderer = importlib.import_module(f"{REPO.name}.local_renderer")
+parser = importlib.import_module(f"{REPO.name}.parser")
 
 
 def snapshot(day, count=5):
@@ -69,14 +71,90 @@ class OutputTests(unittest.IsolatedAsyncioTestCase):
 
         self.plugin._render_image = AsyncMock(side_effect=render)
 
-    def event(self):
+    def event(self, umo="official:GroupMessage:openid", admin=True):
         return SimpleNamespace(
             send=AsyncMock(),
             plain_result=lambda text: text,
+            unified_msg_origin=umo,
+            is_admin=lambda: admin,
         )
 
     async def query(self, event, **kwargs):
         return [result async for result in self.plugin._handle_today(event, **kwargs)]
+
+    def use_disk_config(self):
+        path = Path(self.tmp.name) / "plugin-config.json"
+        self.config = main.AstrBotConfig(config_path=str(path), default_config=dict(self.config))
+        self.plugin.config = self.config
+        return path
+
+    async def command(self, event, action="", lang="zh"):
+        handler = self.plugin.bangumi_cn if lang == "zh" else self.plugin.bangumi_en
+        return [result async for result in handler(event, action)]
+
+    async def test_bare_commands_send_image_for_non_admin(self):
+        for lang in ["zh", "en"]:
+            event = self.event(admin=False)
+            self.assertEqual(await self.command(event, lang=lang), [])
+            event.send.assert_awaited_once()
+            self.assertTrue(event.send.call_args.args[0].chain[0].file.startswith("file:///"))
+        self.plugin._render_image.assert_awaited_once()
+
+    async def test_subscription_persists_and_deduplicates_without_sending_images(self):
+        path = self.use_disk_config()
+        event = self.event()
+        replies = await self.command(event, "订阅")
+        self.assertIn("已订阅", replies[0])
+        self.assertIn("07:00", replies[0])
+        with patch.object(main.AstrBotConfig, "save_config", wraps=self.config.save_config) as save:
+            replies = await self.command(event, "订阅")
+            self.assertIn("已经订阅", replies[0])
+            save.assert_not_called()
+        reloaded = main.AstrBotConfig(config_path=str(path), default_config=dict(self.config))
+        self.assertEqual(reloaded["umos"], [event.unified_msg_origin])
+        event.send.assert_not_awaited()
+        self.plugin._fetch_day.assert_not_awaited()
+
+    async def test_concurrent_subscriptions_preserve_existing_targets(self):
+        self.config["umos"] = ["existing:GroupMessage:keep"]
+        path = self.use_disk_config()
+        events = [self.event(umo=f"official:GroupMessage:{index}") for index in range(4)]
+        await asyncio.gather(*(self.command(event, "subscribe", lang="en") for event in events))
+        stored = json.loads(path.read_text(encoding="utf-8-sig"))
+        self.assertEqual(
+            stored["umos"], ["existing:GroupMessage:keep", *(event.unified_msg_origin for event in events)]
+        )
+        self.assertEqual(self.plugin._get_target_umos(), stored["umos"])
+
+    async def test_subscription_save_failure_rolls_back_and_can_retry(self):
+        path = self.use_disk_config()
+        event = self.event()
+        with (
+            patch.object(main.AstrBotConfig, "save_config", side_effect=OSError("disk full")),
+            patch.object(main.logger, "exception"),
+        ):
+            replies = await self.command(event, "订阅")
+        self.assertIn("保存失败", replies[0])
+        self.assertEqual(self.config["umos"], [])
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8-sig"))["umos"], [])
+        self.assertIn("已订阅", (await self.command(event, "订阅"))[0])
+
+    async def test_subscription_and_status_require_admin(self):
+        self.use_disk_config()
+        for lang, actions in [("zh", ["订阅", "状态"]), ("en", ["subscribe", "status"])]:
+            for action in actions:
+                event = self.event(admin=False)
+                self.assertEqual(await self.command(event, action, lang), [self.plugin._t("admin_required", lang)])
+                event.send.assert_not_awaited()
+        self.assertEqual(self.config["umos"], [])
+
+    async def test_removed_actions_only_return_help(self):
+        for lang, actions in [("zh", ["今日", "推送"]), ("en", ["today", "push"])]:
+            for action in actions:
+                event = self.event()
+                self.assertEqual(await self.command(event, action, lang), [self.plugin._t("command_help", lang)])
+                event.send.assert_not_awaited()
+        self.plugin._fetch_day.assert_not_awaited()
 
     async def test_concurrent_queries_generate_once_and_send_local_files(self):
         events = [self.event() for _ in range(6)]
@@ -125,6 +203,51 @@ class OutputTests(unittest.IsolatedAsyncioTestCase):
         await self.query(self.event())
         self.assertEqual(self.plugin._fetch_day.await_count, 2)
         self.assertEqual(self.plugin._render_image.await_count, 2)
+
+    async def test_incomplete_snapshot_is_refetched_instead_of_reused(self):
+        key = self.plugin._cache.key(self.day.isoformat())
+        data = snapshot(self.day)
+        del data["items"][0]["cover"]
+        self.plugin._cache.write(key, data)
+        await self.query(self.event())
+        self.plugin._fetch_day.assert_awaited_once()
+
+    async def test_cancel_remote_copy_waits_for_writer_before_cleanup(self):
+        self.plugin.html_render = AsyncMock(return_value="download.png")
+        self.plugin._download_covers = AsyncMock(return_value={})
+        destination = Path(self.tmp.name) / "cancelled.png"
+        started = asyncio.Event()
+        finished = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def slow_copy(source, target):
+            loop.call_soon_threadsafe(started.set)
+            try:
+                if not release.wait(timeout=5):
+                    raise TimeoutError("test did not release copy worker")
+                target.write_bytes(b"late image")
+            finally:
+                loop.call_soon_threadsafe(finished.set)
+
+        with patch.object(main.shutil, "copyfile", side_effect=slow_copy):
+            task = asyncio.create_task(
+                main.BangumiCalendarPlugin._render_image(self.plugin, snapshot(self.day), destination)
+            )
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                task.cancel()
+                # Let the coroutine observe cancellation while the thread still runs.
+                await asyncio.sleep(0.05)
+                release.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                await asyncio.wait_for(finished.wait(), timeout=5)
+                self.assertFalse(destination.exists())
+                self.assertFalse(destination.with_suffix(".png.tmp").exists())
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
 
     async def test_push_uses_adapter_and_reuses_query_image(self):
         await self.query(self.event())
@@ -221,6 +344,35 @@ class BrowserLifecycleTests(unittest.IsolatedAsyncioTestCase):
                             await renderer.render_local("<p>hello</p>", {}, Path("unused.png"))
                 browser.close.assert_awaited_once()
                 manager.__aexit__.assert_awaited_once()
+
+
+class ScheduleTests(unittest.TestCase):
+    def test_push_time_rejects_extra_parts(self):
+        self.assertEqual(parser.parse_push_time("8:30:garbage"), (7, 0))
+        self.assertEqual(parser.parse_push_time("8:30:00"), (7, 0))
+        self.assertEqual(parser.parse_push_time("8:30"), (8, 30))
+
+
+class CommandRegistrationTests(unittest.TestCase):
+    def test_astrbot_parses_bare_and_subscription_commands(self):
+        from astrbot.core.star.filter.command import CommandFilter
+        from astrbot.core.star.star_handler import star_handlers_registry
+
+        handlers = [md for md in star_handlers_registry if md.handler.__module__ == main.__name__]
+        self.assertEqual({md.handler.__name__ for md in handlers}, {"bangumi_cn", "bangumi_en"})
+        for md in handlers:
+            command_filter = next(f for f in md.event_filters if isinstance(f, CommandFilter))
+            command = "新番" if md.handler.__name__ == "bangumi_cn" else "bangumi"
+            action = "订阅" if command == "新番" else "subscribe"
+            for suffix in ["", action]:
+                extras = {}
+                event = SimpleNamespace(
+                    is_at_or_wake_command=True,
+                    get_message_str=lambda: f"{command} {suffix}".strip(),
+                    set_extra=lambda key, value: extras.__setitem__(key, value),
+                )
+                self.assertTrue(command_filter.filter(event, {}))
+                self.assertEqual(extras["parsed_params"], {"action": suffix})
 
 
 if __name__ == "__main__":

@@ -41,7 +41,11 @@ __all__ = ["httpx"]
 # 英文表缺失的键回退中文表；两表都缺失时原样返回键名（仅编程错误时出现）。
 _REPLY_CN = {
     "today_failed": "获取新番信息失败，请稍后再试",
-    "push_done": "已向 {count} 个目标推送今日新番",
+    "subscribed": "已订阅，每天 {time} 推送新番图片（服务器时区）。当前会话已加入配置中的推送目标列表。",
+    "already_subscribed": "当前会话已经订阅，无需重复添加。",
+    "subscribe_failed": "订阅保存失败，请查看日志后重试。",
+    "admin_required": "订阅和状态指令仅限 AstrBot 管理员使用。",
+    "command_help": "发送 /新番 查看今日图片；管理员可用 /新番 订阅、/新番 状态。",
     "status_title": "Bangumi新番日历插件",
     "status_push_time": "推送时间",
     "status_targets": "目标数",
@@ -52,7 +56,11 @@ _REPLY_CN = {
 
 _REPLY_EN = {
     "today_failed": "Failed to fetch anime info, please try again later",
-    "push_done": "Pushed today's anime to {count} target(s)",
+    "subscribed": "Subscribed for daily images at {time} (server time). This session was saved to the configured targets.",
+    "already_subscribed": "This session is already subscribed.",
+    "subscribe_failed": "Could not save the subscription. Check the logs and try again.",
+    "admin_required": "Subscription and status commands require AstrBot administrator permission.",
+    "command_help": "Use /bangumi for today's image. Admin commands: /bangumi subscribe and /bangumi status.",
     "status_title": "Bangumi Calendar Plugin",
     "status_push_time": "Push time",
     "status_targets": "Targets",
@@ -140,7 +148,7 @@ class BangumiCalendarPlugin(Star):
         Args:
             key: 文案标识（_REPLY_CN/_REPLY_EN 的键）。
             lang: 回复语言，zh 中文、en 英文，其他值回退中文。
-            **fmt: 模板格式化参数（如 push_done 的 count）。
+            **fmt: 模板格式化参数（如 subscribed 的 time）。
 
         Returns:
             str: 格式化后的回复文案。
@@ -152,100 +160,35 @@ class BangumiCalendarPlugin(Star):
             return key
         return template.format(**fmt)
 
-    @filter.command_group("新番")
-    def bangumi_cn(self):
-        """新番日历命令组（中文）"""
-        pass
-
-    @filter.command_group("bangumi")
-    def bangumi_en(self):
-        """Bangumi calendar command group (English)"""
-        pass
-
-    # ---- 中文指令 ----
-
-    @bangumi_cn.command("今日")
-    async def today_anime_cn(self, event: AstrMessageEvent):
-        """查看今日更新的新番。
-
-        Args:
-            event: AstrBot 消息事件。
-
-        Returns:
-            AsyncGenerator: 渲染成功时产出图片消息，失败时产出失败提示文本。
-        """
-        async for result in self._handle_today(event):
+    @filter.command("新番")
+    async def bangumi_cn(self, event: AstrMessageEvent, action: str = ""):
+        """查看今日新番；管理员可用订阅、状态。"""
+        async for result in self._handle_command(event, action):
             yield result
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @bangumi_cn.command("推送")
-    async def manual_push_cn(self, event: AstrMessageEvent):
-        """手动推送今日新番到所有目标。
-
-        Args:
-            event: AstrBot 消息事件。
-
-        Returns:
-            AsyncGenerator: 产出包含推送目标数的文本结果。
-        """
-        async for result in self._handle_push(event):
+    @filter.command("bangumi")
+    async def bangumi_en(self, event: AstrMessageEvent, action: str = ""):
+        """Show today's image; admins can use subscribe and status."""
+        async for result in self._handle_command(event, action, lang="en"):
             yield result
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @bangumi_cn.command("状态")
-    async def check_status_cn(self, event: AstrMessageEvent):
-        """查看插件运行状态。
-
-        Args:
-            event: AstrBot 消息事件。
-
-        Returns:
-            AsyncGenerator: 产出状态信息文本。
-        """
-        async for result in self._handle_status(event):
-            yield result
-
-    # ---- 英文指令 ----
-
-    @bangumi_en.command("today")
-    async def today_anime_en(self, event: AstrMessageEvent):
-        """View today's anime schedule.
-
-        Args:
-            event: AstrBot message event.
-
-        Returns:
-            AsyncGenerator: image result on success, failure text otherwise.
-        """
-        async for result in self._handle_today(event, lang="en"):
-            yield result
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @bangumi_en.command("push")
-    async def manual_push_en(self, event: AstrMessageEvent):
-        """Push today's anime to all targets.
-
-        Args:
-            event: AstrBot message event.
-
-        Returns:
-            AsyncGenerator: text result with the pushed target count.
-        """
-        async for result in self._handle_push(event, lang="en"):
-            yield result
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @bangumi_en.command("status")
-    async def check_status_en(self, event: AstrMessageEvent):
-        """Check plugin status.
-
-        Args:
-            event: AstrBot message event.
-
-        Returns:
-            AsyncGenerator: status text result.
-        """
-        async for result in self._handle_status(event, lang="en"):
+    async def _handle_command(self, event: AstrMessageEvent, action: str, lang: str = "zh") -> AsyncGenerator:
+        if not action:
+            handler = self._handle_today
+        else:
+            commands = (
+                {"subscribe": self._handle_subscribe, "status": self._handle_status}
+                if lang == "en"
+                else {"订阅": self._handle_subscribe, "状态": self._handle_status}
+            )
+            handler = commands.get(action)
+            if handler is None:
+                yield event.plain_result(self._t("command_help", lang))
+                return
+            if not event.is_admin():
+                yield event.plain_result(self._t("admin_required", lang))
+                return
+        async for result in handler(event, lang=lang):
             yield result
 
     async def _handle_today(self, event: AstrMessageEvent, lang: str = "zh") -> AsyncGenerator:
@@ -258,18 +201,26 @@ class BangumiCalendarPlugin(Star):
             logger.exception("[Bangumi日历] 获取或发送新番失败")
             yield event.plain_result(self._t("today_failed", lang))
 
-    async def _handle_push(self, event: AstrMessageEvent, lang: str = "zh") -> AsyncGenerator:
-        """中英文「推送」命令共享核心：推送今日新番并报告成功数。
-
-        Args:
-            event: AstrBot 消息事件。
-            lang: 回复语言，zh 中文、en 英文，默认中文。
-
-        Returns:
-            AsyncGenerator: 产出包含推送目标数的文本结果。
-        """
-        count = await self._push_to_all_groups()
-        yield event.plain_result(self._t("push_done", lang, count=count))
+    async def _handle_subscribe(self, event: AstrMessageEvent, lang: str = "zh") -> AsyncGenerator:
+        """Persist the current session in the same UMO list edited by the WebUI."""
+        umo = event.unified_msg_origin
+        targets = self._get_target_umos()
+        if umo in targets:
+            yield event.plain_result(self._t("already_subscribed", lang))
+            return
+        previous = self.config.get("umos", [])
+        self.config["umos"] = [*targets, umo]
+        try:
+            # This small synchronous save has no await between read and write,
+            # so concurrent subscription handlers cannot overwrite one another.
+            self.config.save_config()
+        except Exception:
+            self.config["umos"] = previous
+            logger.exception("[Bangumi日历] 保存订阅失败")
+            yield event.plain_result(self._t("subscribe_failed", lang))
+            return
+        hour, minute = self._parse_push_time()
+        yield event.plain_result(self._t("subscribed", lang, time=f"{hour:02d}:{minute:02d}"))
 
     async def _handle_status(self, event: AstrMessageEvent, lang: str = "zh") -> AsyncGenerator:
         """中英文「状态」命令共享核心：产出对应语言的状态信息文本。
@@ -303,7 +254,7 @@ class BangumiCalendarPlugin(Star):
             f"{self._t('status_targets', lang)}: {len(umos)}\n"
             f"{self._t('status_proxy', lang)}: {proxy or self._t('status_direct', lang)}\n"
             f"渲染: {self.config.get('render_backend', 'remote')}\n"
-            f"缓存日期: {datetime.date.today().isoformat()}（服务器时区）\n"
+            f"日历日期: {datetime.date.today().isoformat()}（服务器时区）\n"
             f"{self._t('status_next_push', lang, hours=hours, minutes=minutes)}"
         )
 
@@ -423,7 +374,14 @@ class BangumiCalendarPlugin(Star):
                         source = await self.html_render(HTML_TMPL, template_data, return_url=False, options=options)
                         if not source:
                             raise RuntimeError("html_render 返回空结果")
-                        await asyncio.to_thread(shutil.copyfile, source, temporary)
+                        # Cancelling to_thread does not stop the writer. Join it before
+                        # cleanup so it cannot recreate the temp file or race a retry.
+                        copy_task = asyncio.create_task(asyncio.to_thread(shutil.copyfile, source, temporary))
+                        try:
+                            await asyncio.shield(copy_task)
+                        except asyncio.CancelledError:
+                            await asyncio.gather(copy_task, return_exceptions=True)
+                            raise
                         break
                     except Exception:
                         if attempt == 2:
@@ -438,7 +396,7 @@ class BangumiCalendarPlugin(Star):
 
     async def _push_to_all_groups(self) -> int:
         """Push the cached image through AstrBot's adapter."""
-        success = 0
+        submitted = 0
         for umo in self._get_target_umos():
             try:
                 async with self._cache.lock:
@@ -447,12 +405,13 @@ class BangumiCalendarPlugin(Star):
                 if sent is False:
                     logger.warning("[Bangumi日历] 推送目标不可用: %s", umo)
                     continue
-                success += 1
-                logger.info("[Bangumi日历] 已推送至 %s", umo)
+                # Context.send_message confirms platform routing, not delivery.
+                submitted += 1
+                logger.info("[Bangumi日历] 已提交推送请求: %s", umo)
                 await asyncio.sleep(2)
             except Exception:
                 logger.exception("[Bangumi日历] 推送至 %s 失败", umo)
-        return success
+        return submitted
 
     async def _daily_cache_cleanup(self):
         """Expire old snapshots and images at local midnight, without launching a browser."""

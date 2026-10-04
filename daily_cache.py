@@ -9,6 +9,7 @@ from pathlib import Path
 from .card import HTML_TMPL
 
 _CACHE_FILE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-f0-9]{12}\.(?:json|png)(?:\.tmp)?$")
+_ITEM_FIELDS = {"id", "index", "name", "name_cn", "score", "rank", "doing", "air_date", "cover", "tags"}
 _CONTENT_SETTINGS = (
     "sort_by",
     "sort_order",
@@ -51,6 +52,10 @@ class DailyCache:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or data.get("date") != key[:10] or not isinstance(data.get("items"), list):
+                return None
+            if not isinstance(data.get("weekday"), str) or data.get("count") != len(data["items"]):
+                return None
+            if any(not isinstance(item, dict) or not _ITEM_FIELDS <= item.keys() for item in data["items"]):
                 return None
             return data
         except (OSError, ValueError):
